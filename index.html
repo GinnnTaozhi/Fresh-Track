@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FreshTrack - Smart Food Waste Manager</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+        }
+        .modal {
+            display: none;
+        }
+        .modal.active {
+            display: flex;
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50 min-h-screen">
+    <div id="app"></div>
+
+    <script>
+        // Data Storage
+        let items = JSON.parse(localStorage.getItem('freshtrack-items') || '[]');
+        let wastedItems = JSON.parse(localStorage.getItem('freshtrack-wasted') || '[]');
+        let activeTab = 'inventory';
+        let searchTerm = '';
+        let filterCategory = 'all';
+
+        const categories = ['vegetables', 'fruits', 'dairy', 'meat', 'grains', 'beverages', 'other'];
+        const units = ['pieces', 'kg', 'g', 'L', 'mL', 'pack'];
+        const locations = ['fridge', 'freezer', 'pantry', 'counter'];
+
+        // Helper Functions
+        function saveData() {
+            localStorage.setItem('freshtrack-items', JSON.stringify(items));
+            localStorage.setItem('freshtrack-wasted', JSON.stringify(wastedItems));
+        }
+
+        function getDaysUntilExpiry(expiryDate) {
+            const today = new Date();
+            const expiry = new Date(expiryDate);
+            const diffTime = expiry - today;
+            return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        }
+
+        function getExpiryStatus(expiryDate) {
+            const days = getDaysUntilExpiry(expiryDate);
+            if (days < 0) return { status: 'expired', color: 'red', text: 'Expired' };
+            if (days === 0) return { status: 'today', color: 'red', text: 'Expires Today' };
+            if (days <= 3) return { status: 'urgent', color: 'orange', text: `${days} days left` };
+            if (days <= 7) return { status: 'warning', color: 'yellow', text: `${days} days left` };
+            return { status: 'good', color: 'green', text: `${days} days left` };
+        }
+
+        function getStats() {
+            const now = new Date();
+            return {
+                totalItems: items.length,
+                expiringSoon: items.filter(i => getDaysUntilExpiry(i.expiryDate) <= 3).length,
+                wastedThisMonth: wastedItems.filter(i => {
+                    const wastedDate = new Date(i.wastedDate);
+                    return wastedDate.getMonth() === now.getMonth() && wastedDate.getFullYear() === now.getFullYear();
+                }).length,
+                savedItems: items.filter(i => getDaysUntilExpiry(i.expiryDate) > 0).length
+            };
+        }
+
+        function getRecipeSuggestions() {
+            const expiringItems = items
+                .filter(item => getDaysUntilExpiry(item.expiryDate) <= 3)
+                .map(item => item.name.toLowerCase());
+
+            const recipes = [
+                {
+                    id: 1,
+                    name: 'Vegetable Stir Fry',
+                    ingredients: ['vegetables', 'carrot', 'broccoli', 'cabbage'],
+                    time: '20 min',
+                    difficulty: 'Easy'
+                },
+                {
+                    id: 2,
+                    name: 'Fresh Fruit Smoothie',
+                    ingredients: ['banana', 'apple', 'berries', 'milk'],
+                    time: '5 min',
+                    difficulty: 'Easy'
+                },
+                {
+                    id: 3,
+                    name: 'Leftover Rice Bowl',
+                    ingredients: ['rice', 'vegetables', 'egg', 'soy sauce'],
+                    time: '15 min',
+                    difficulty: 'Easy'
+                },
+                {
+                    id: 4,
+                    name: 'Veggie Soup',
+                    ingredients: ['vegetables', 'carrot', 'potato', 'onion'],
+                    time: '30 min',
+                    difficulty: 'Medium'
+                }
+            ];
+
+            return recipes.filter(recipe => 
+                recipe.ingredients.some(ing => 
+                    expiringItems.some(item => item.includes(ing) || ing.includes(item))
+                )
+            );
+        }
+
+        // Actions
+        function addItem(formData) {
+            const item = {
+                id: Date.now(),
+                ...formData,
+                addedDate: new Date().toISOString()
+            };
+            items.push(item);
+            saveData();
+            closeModal();
+            render();
+        }
+
+        function markAsConsumed(id) {
+            items = items.filter(item => item.id !== id);
+            saveData();
+            render();
+        }
+
+        function markAsWasted(id) {
+            const item = items.find(i => i.id === id);
+            if (item) {
+                wastedItems.push({ ...item, wastedDate: new Date().toISOString() });
+                items = items.filter(i => i.id !== id);
+                saveData();
+                render();
+            }
+        }
+
+        function showModal() {
+            document.getElementById('addModal').classList.add('active');
+        }
+
+        function closeModal() {
+            document.getElementById('addModal').classList.remove('active');
+        }
+
+        // Render Functions
+        function renderHeader() {
+            return `
+                <div class="bg-gradient-to-r from-green-600 to-emerald-600 text-white shadow-lg">
+                    <div class="max-w-7xl mx-auto px-4 py-6">
+                        <div class="flex items-center justify-between flex-wrap gap-4">
+                            <div class="flex items-center gap-3">
+                                <div class="bg-white p-2 rounded-lg">
+                                    <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                    </svg>
+                                </div>
+                                <div>
+                                    <h1 class="text-3xl font-bold">FreshTrack</h1>
+                                    <p class="text-green-100 text-sm">Smart Food Waste Management</p>
+                                </div>
+                            </div>
+                            <button onclick="showModal()" class="bg-white text-green-600 px-6 py-3 rounded-lg font-semibold hover:bg-green-50 transition-colors shadow-md">
+                                + Add Food Item
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderStats() {
+            const stats = getStats();
+            return `
+                <div class="max-w-7xl mx-auto px-4 py-6">
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div class="bg-white p-4 rounded-lg shadow-md border-l-4 border-blue-500">
+                            <p class="text-gray-600 text-sm">Total Items</p>
+                            <p class="text-2xl font-bold text-gray-800">${stats.totalItems}</p>
+                        </div>
+                        <div class="bg-white p-4 rounded-lg shadow-md border-l-4 border-orange-500">
+                            <p class="text-gray-600 text-sm">Expiring Soon</p>
+                            <p class="text-2xl font-bold text-orange-600">${stats.expiringSoon}</p>
+                        </div>
+                        <div class="bg-white p-4 rounded-lg shadow-md border-l-4 border-red-500">
+                            <p class="text-gray-600 text-sm">Wasted (Month)</p>
+                            <p class="text-2xl font-bold text-red-600">${stats.wastedThisMonth}</p>
+                        </div>
+                        <div class="bg-white p-4 rounded-lg shadow-md border-l-4 border-green-500">
+                            <p class="text-gray-600 text-sm">Items Saved</p>
+                            <p class="text-2xl font-bold text-green-600">${stats.savedItems}</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderTabs() {
+            const tabs = [
+                { id: 'inventory', label: 'Food Inventory' },
+                { id: 'recipes', label: 'Recipe Suggestions' },
+                { id: 'analytics', label: 'Analytics' }
+            ];
+
+            return `
+                <div class="max-w-7xl mx-auto px-4">
+                    <div class="bg-white rounded-t-lg shadow-md">
+                        <div class="flex border-b">
+                            ${tabs.map(tab => `
+                                <button 
+                                    onclick="activeTab='${tab.id}'; render();"
+                                    class="px-6 py-4 font-semibold transition-colors ${
+                                        activeTab === tab.id 
+                                            ? 'text-green-600 border-b-2 border-green-600 bg-green-50' 
+                                            : 'text-gray-600 hover:bg-gray-50'
+                                    }"
+                                >
+                                    ${tab.label}
+                                </button>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderInventory() {
+            const filteredItems = items
+                .filter(item => filterCategory === 'all' || item.category === filterCategory)
+                .filter(item => item.name.toLowerCase().includes(searchTerm.toLowerCase()))
+                .sort((a, b) => getDaysUntilExpiry(a.expiryDate) - getDaysUntilExpiry(b.expiryDate));
+
+            return `
+                <div>
+                    <div class="flex flex-col md:flex-row gap-4 mb-6">
+                        <input
+                            type="text"
+                            placeholder="Search food items..."
+                            oninput="searchTerm=this.value; render();"
+                            value="${searchTerm}"
+                            class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                        />
+                        <select
+                            onchange="filterCategory=this.value; render();"
+                            class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                        >
+                            <option value="all">All Categories</option>
+                            ${categories.map(cat => `
+                                <option value="${cat}" ${filterCategory === cat ? 'selected' : ''}>
+                                    ${cat.charAt(0).toUpperCase() + cat.slice(1)}
+                                </option>
+                            `).join('')}
+                        </select>
+                    </div>
+
+                    ${filteredItems.length === 0 ? `
+                        <div class="text-center py-12">
+                            <p class="text-gray-500 text-lg">No food items found</p>
+                            <p class="text-gray-400 text-sm">Add items to start tracking</p>
+                        </div>
+                    ` : `
+                        <div class="space-y-3">
+                            ${filteredItems.map(item => {
+                                const status = getExpiryStatus(item.expiryDate);
+                                const bgColor = {
+                                    'expired': 'border-red-300 bg-red-50',
+                                    'today': 'border-red-300 bg-red-50',
+                                    'urgent': 'border-orange-300 bg-orange-50',
+                                    'warning': 'border-yellow-300 bg-yellow-50',
+                                    'good': 'border-green-200 bg-white'
+                                }[status.status];
+                                
+                                const textColor = {
+                                    'red': 'text-red-600',
+                                    'orange': 'text-orange-600',
+                                    'yellow': 'text-yellow-600',
+                                    'green': 'text-green-600'
+                                }[status.color];
+
+                                return `
+                                    <div class="p-4 rounded-lg border-2 ${bgColor}">
+                                        <div class="flex items-center justify-between flex-wrap gap-4">
+                                            <div class="flex-1">
+                                                <div class="flex items-center gap-3 mb-2 flex-wrap">
+                                                    <h3 class="text-lg font-semibold text-gray-800">${item.name}</h3>
+                                                    <span class="px-2 py-1 bg-gray-200 text-gray-700 text-xs rounded-full">
+                                                        ${item.category}
+                                                    </span>
+                                                    <span class="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full">
+                                                        ${item.location}
+                                                    </span>
+                                                </div>
+                                                <div class="flex items-center gap-4 text-sm text-gray-600 flex-wrap">
+                                                    <span>Qty: ${item.quantity} ${item.unit}</span>
+                                                    <span>•</span>
+                                                    <span>Expires: ${new Date(item.expiryDate).toLocaleDateString()}</span>
+                                                    <span>•</span>
+                                                    <span class="font-semibold ${textColor}">${status.text}</span>
+                                                </div>
+                                            </div>
+                                            <div class="flex gap-2">
+                                                <button
+                                                    onclick="markAsConsumed(${item.id})"
+                                                    class="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors text-sm"
+                                                >
+                                                    ✓ Consumed
+                                                </button>
+                                                <button
+                                                    onclick="markAsWasted(${item.id})"
+                                                    class="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors text-sm"
+                                                >
+                                                    ✗ Wasted
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    `}
+                </div>
+            `;
+        }
+
+        function renderRecipes() {
+            const suggestions = getRecipeSuggestions();
+            
+            return `
+                <div>
+                    <div class="mb-6">
+                        <h2 class="text-2xl font-bold text-gray-800 mb-2">Recipe Suggestions</h2>
+                        <p class="text-gray-600">Based on items expiring in the next 3 days</p>
+                    </div>
+
+                    ${suggestions.length === 0 ? `
+                        <div class="text-center py-12">
+                            <p class="text-gray-500 text-lg">No recipe suggestions available</p>
+                            <p class="text-gray-400 text-sm">Add items to get personalized recipes</p>
+                        </div>
+                    ` : `
+                        <div class="grid md:grid-cols-2 gap-4">
+                            ${suggestions.map(recipe => `
+                                <div class="p-6 bg-gradient-to-br from-orange-50 to-yellow-50 rounded-lg border-2 border-orange-200 hover:shadow-lg transition-shadow">
+                                    <h3 class="text-xl font-bold text-gray-800 mb-3">${recipe.name}</h3>
+                                    <div class="flex gap-4 text-sm text-gray-600 mb-3">
+                                        <span>⏱️ ${recipe.time}</span>
+                                        <span>📊 ${recipe.difficulty}</span>
+                                    </div>
+                                    <div class="mb-3">
+                                        <p class="text-sm font-semibold text-gray-700 mb-1">Uses:</p>
+                                        <div class="flex flex-wrap gap-2">
+                                            ${recipe.ingredients.slice(0, 4).map(ing => `
+                                                <span class="px-2 py-1 bg-white text-gray-700 text-xs rounded-full">
+                                                    ${ing}
+                                                </span>
+                                            `).join('')}
+                                        </div>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `}
+                </div>
+            `;
+        }
+
+        function renderAnalytics() {
+            const stats = getStats();
+            const totalProcessed = items.length + wastedItems.length;
+            const wasteRate = totalProcessed > 0 ? Math.round((stats.wastedThisMonth / totalProcessed) * 100) : 0;
+            
+            return `
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-800 mb-6">Waste Analytics</h2>
+                    
+                    <div class="grid md:grid-cols-2 gap-6">
+                        <div class="p-6 bg-gradient-to-br from-green-50 to-emerald-50 rounded-lg border-2 border-green-200">
+                            <h3 class="text-lg font-semibold text-gray-800 mb-4">Monthly Summary</h3>
+                            <div class="space-y-3">
+                                <div class="flex justify-between items-center">
+                                    <span class="text-gray-600">Items Added:</span>
+                                    <span class="font-bold text-gray-800">${totalProcessed}</span>
+                                </div>
+                                <div class="flex justify-between items-center">
+                                    <span class="text-gray-600">Items Consumed:</span>
+                                    <span class="font-bold text-green-600">${items.length}</span>
+                                </div>
+                                <div class="flex justify-between items-center">
+                                    <span class="text-gray-600">Items Wasted:</span>
+                                    <span class="font-bold text-red-600">${stats.wastedThisMonth}</span>
+                                </div>
+                                <div class="pt-3 border-t border-green-300">
+                                    <div class="flex justify-between items-center">
+                                        <span class="text-gray-700 font-semibold">Waste Rate:</span>
+                                        <span class="font-bold text-lg text-gray-800">${wasteRate}%</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="p-6 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg border-2 border-blue-200">
+                            <h3 class="text-lg font-semibold text-gray-800 mb-4">Category Breakdown</h3>
+                            <div class="space-y-2">
+                                ${categories.map(cat => {
+                                    const count = items.filter(i => i.category === cat).length;
+                                    const percentage = items.length > 0 ? (count / items.length) * 100 : 0;
+                                    return `
+                                        <div>
+                                            <div class="flex justify-between text-sm mb-1">
+                                                <span class="text-gray-600 capitalize">${cat}</span>
+                                                <span class="font-semibold text-gray-800">${count} items</span>
+                                            </div>
+                                            <div class="w-full bg-gray-200 rounded-full h-2">
+                                                <div class="bg-blue-500 h-2 rounded-full transition-all" style="width: ${percentage}%"></div>
+                                            </div>
+                                        </div>
+                                    `;
+                                }).join('')}
+                            </div>
+                        </div>
+
+                        <div class="md:col-span-2 p-6 bg-gradient-to-br from-purple-50 to-pink-50 rounded-lg border-2 border-purple-200">
+                            <h3 class="text-lg font-semibold text-gray-800 mb-4">Impact Summary</h3>
+                            <div class="grid md:grid-cols-3 gap-4">
+                                <div class="text-center">
+                                    <div class="text-3xl font-bold text-purple-600 mb-1">${totalProcessed}</div>
+                                    <div class="text-sm text-gray-600">Items Tracked</div>
+                                </div>
+                                <div class="text-center">
+                                    <div class="text-3xl font-bold text-green-600 mb-1">
+                                        ${Math.round((1 - (stats.wastedThisMonth / (totalProcessed || 1))) * 100)}%
+                                    </div>
+                                    <div class="text-sm text-gray-600">Waste Reduction</div>
+                                </div>
+                                <div class="text-center">
+                                    <div class="text-3xl font-bold text-blue-600 mb-1">RM ${(stats.savedItems * 5).toFixed(2)}</div>
+                                    <div class="text-sm text-gray-600">Money Saved (Est.)</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderAddModal() {
+            return `
+                <div id="addModal" class="modal fixed inset-0 bg-black bg-opacity-50 items-center justify-center p-4 z-50">
+                    <div class="bg-white rounded-lg p-6 max-w-md w-full" onclick="event.stopPropagation()">
+                        <h2 class="text-2xl font-bold text-gray-800 mb-4">Add Food Item</h2>
+                        
+                        <form onsubmit="event.preventDefault(); handleAddItem(event);" class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-1">Item Name *</label>
+                                <input
+                                    type="text"
+                                    name="name"
+                                    required
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                                    placeholder="e.g., Tomatoes"
+                                />
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-semibold text-gray-700 mb-1">Category</label>
+                                    <select name="category" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent">
+                                        ${categories.map(cat => `<option value="${cat}">${cat.charAt(0).toUpperCase() + cat.slice(1)}</option>`).join('')}
+                                    </select>
+                                </div>
+
+                                <div>
+                                    <label class="block text-sm font-semibold text-gray-700 mb-1">Location</label>
+                                    <select name="location" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent">
+                                        ${locations.map(loc => `<option value="${loc}">${loc.charAt(0).toUpperCase() + loc.slice(1)}</option>`).join('')}
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-semibold text-gray-700 mb-1">Quantity</label>
+                                    <input
+                                        type="number"
+                                        name="quantity"
+                                        value="1"
+                                        min="0.1"
+                                        step="0.1"
+                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                                    />
+                                </div>
+
+                                <div>
+                                    <label class="block text-sm font-semibold text-gray-700 mb-1">Unit</label>
+                                    <select name="unit" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent">
+                                        ${units.map(unit => `<option value="${unit}">${unit}</option>`).join('')}
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-semibold text-gray-700 mb-1">Purchase Date</label>
+                                    <input
+                                        type="date"
+                                        name="purchaseDate"
+                                        value="${new Date().toISOString().split('T')[0]}"
+                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                                    />
+                                </div>
+
+                                <div>
+                                    <label class="block text-sm font-semibold text-gray-700 mb-1">Expiry Date *</label>
+                                    <input
+                                        type="date"
+                                        name="expiryDate"
+                                        required
+                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                                    />
+                                </div>
+                            </div>
+
+                            <div class="flex gap-3 mt-6">
+                                <button
+                                    type="button"
+                                    onclick="closeModal()"
+                                    class="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    class="flex-1 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors font-semibold"
+                                >
+                                    Add Item
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            `;
+        }
+
+        function handleAddItem(event) {
+            const formData = new FormData(event.target);
+            const data = {
+                name: formData.get('name'),
+                category: formData.get('category'),
+                location: formData.get('location'),
+                quantity: parseFloat(formData.get('quantity')),
+                unit: formData.get('unit'),
+                purchaseDate: formData.get('purchaseDate'),
+                expiryDate: formData.get('expiryDate')
+            };
+            addItem(data);
+        }
+
+        function render() {
+            const content = {
+                'inventory': renderInventory(),
+                'recipes': renderRecipes(),
+                'analytics': renderAnalytics()
+            }[activeTab];
+
+            document.getElementById('app').innerHTML = `
+                ${renderHeader()}
+                ${renderStats()}
+                ${renderTabs()}
+                <div class="max-w-7xl mx-auto px-4 pb-8">
+                    <div class="bg-white rounded-b-lg shadow-md p-6">
+                        ${content}
+                    </div>
+                </div>
+                ${renderAddModal()}
+            `;
+        }
+
+        // Initial render
+        render();
+    </script>
+</body>
+</html>
